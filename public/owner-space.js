@@ -170,6 +170,7 @@
           <form class="owner-music-upload" id="ownerSongUploadForm"><div class="owner-music-form-fields"><input class="owner-input" id="ownerSongTitleInput" maxlength="120" placeholder="اسم الأغنية (اختياري)"><input class="owner-input" id="ownerSongArtistInput" maxlength="120" placeholder="اسم الفنان (اختياري)"></div><div class="owner-music-form-fields"><label class="owner-music-file">اختاري ملف الأغنية<input type="file" id="ownerSongAudioInput" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.webm" required><small id="ownerSongFileName">MP3 أو M4A أو WAV · حتى 25 ميجابايت</small></label><label class="owner-music-file">غلاف الأغنية (اختياري)<input type="file" id="ownerSongCoverInput" accept="image/jpeg,image/png,image/webp,image/avif"><small>JPG أو PNG أو WEBP · حتى 4 ميجابايت</small></label></div><div class="owner-music-upload-actions"><span class="owner-small">الأغاني خاصة بك ولا تظهر لباقي الحسابات.</span><button type="submit" class="btn btn-primary btn-sm" id="ownerSongUploadButton">＋ إضافة للمفضلة</button></div></form>
           <div class="owner-song-list" id="ownerSongList"><div class="owner-small">جارٍ تحميل مكتبتك...</div></div>
         </section>
+        <div id="ownerLoginVideoHost"></div>
         <div class="owner-feature-grid">
           <section class="owner-feature-card"><div class="owner-card-heading"><span style="display:flex;align-items:center;gap:10px"><span class="owner-card-icon" aria-hidden="true">✎</span> ملاحظاتي</span><button class="btn btn-primary btn-sm" id="ownerNewNote">＋ ملاحظة جديدة</button></div>
             <div class="owner-studio-box"><label class="owner-small" for="ownerNoteTitle">عنوان الملاحظة</label><input class="owner-input" id="ownerNoteTitle" maxlength="160" placeholder="عنوان واضح لملاحظتك"><label class="owner-small" for="ownerNoteBody" style="display:block;margin-top:10px">النص</label><textarea class="owner-input" id="ownerNoteBody" maxlength="20000" rows="3" placeholder="اكتبي فكرة أو تذكيرًا..."></textarea><button class="btn btn-subtle btn-sm" id="ownerSaveNote" style="margin-top:9px">حفظ الملاحظة</button></div><div id="ownerNotes" style="margin-top:11px"></div>
@@ -182,6 +183,8 @@
     </main>`;
     const canUseOwnerMusic = String(state.user.username || '').toLowerCase() === 'shrouk';
     if (!canUseOwnerMusic) panel.querySelector('.owner-music-card')?.remove();
+    if (!canUseOwnerMusic) panel.querySelector('#ownerLoginVideoHost')?.remove();
+    else window.ShroukLoginVideo?.mountCard(panel.querySelector('#ownerLoginVideoHost'));
     document.body.appendChild(panel);
     if (canUseOwnerMusic) mountGlobalMusicPlayer();
     panel.querySelector('#ownerStudioClose').addEventListener('click', closeOwnerProfile);

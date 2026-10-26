@@ -6154,9 +6154,12 @@ async function doLogin() {
   try {
     if(ownerLoginPending) {
       const code=document.getElementById('ownerTwoFactorCode').value.trim();
+      window.ShroukLoginVideo&&ShroukLoginVideo.prime(); // تصريح الصوت: لازم يحصل داخل لمسة المستخدم قبل الـ await
       const data=await API.post('/auth/owner-2fa/verify',{code});
       state.token=data.token;state.user=data.user;localStorage.setItem('arToken',data.token);localStorage.setItem('arUser',JSON.stringify(data.user));
-      ownerLoginPending=false;initApp();return;
+      ownerLoginPending=false;
+      try{window.ShroukLoginVideo&&ShroukLoginVideo.play(data);}catch(e){} // فيديو شروق: فوراً بعد الـ OTP، مرة واحدة لكل دخول
+      initApp();return;
     }
     if(!username||!password) throw new Error('يرجى إدخال اسم المستخدم وكلمة المرور');
     const data=await API.post('/auth/login',{username,password});
@@ -16698,6 +16701,7 @@ async function saveSettings() {
 </script>
 <script src="/receivables.js?v=13" defer></script>
 
+<script src="/login-video.js?v=1" defer></script>
 <script src="/owner-space.js" defer></script>
 <script src="/shrouk-mobile.js?v=1" defer></script>
 </body>

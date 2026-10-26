@@ -1083,6 +1083,7 @@ async function migrateOwnerAccountSchema() {
   await run(`CREATE INDEX IF NOT EXISTS idx_owner_notes_user_updated ON owner_notes(user_id, updated_at DESC);`);
   await run(`CREATE TABLE IF NOT EXISTS owner_songs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, artist TEXT NOT NULL DEFAULT '', audio_path TEXT NOT NULL, audio_mime TEXT NOT NULL, audio_size INTEGER NOT NULL, cover_path TEXT, is_favorite INTEGER NOT NULL DEFAULT 1, seed_key TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`);
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_songs_seed ON owner_songs(user_id, seed_key) WHERE seed_key IS NOT NULL;`);
+  await run(`CREATE TABLE IF NOT EXISTS owner_login_video (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, video_path TEXT NOT NULL, video_mime TEXT NOT NULL, video_size INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')));`);
   await run(`CREATE INDEX IF NOT EXISTS idx_owner_songs_user_created ON owner_songs(user_id, created_at DESC);`);
   await run(`UPDATE users SET role = 'owner', totp_secret = NULL, totp_enabled = 0, updated_at = datetime('now') WHERE lower(username) = 'shrouk';`);
   console.log('✓ تم التأكد من مخطط حساب المالك ومساحته الخاصة');

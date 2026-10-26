@@ -5,6 +5,7 @@ const router = express.Router();
 const { get, run, all } = require('../db/database');
 const nodemailer = require('nodemailer');
 const { generateToken, authenticate, JWT_SECRET } = require('../middleware/auth');
+const { getLoginVideoPayload } = require('../utils/loginVideo');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
@@ -193,10 +194,13 @@ async function getOwnerEmailChallenge(req, res) {
     return user;
   } catch (_) { res.status(401).json({ error: 'انتهت جلسة التحقق، أعد تسجيل الدخول' }); return null; }
 }
-function issueOwnerSession(user, res) {
+async function issueOwnerSession(user, res) {
   const token = generateToken({ ...user, role: 'owner', can_view_cost_price: 1 });
-  return res.json({ token, user: { id: user.id, full_name: user.full_name, username: user.username, role: 'owner', can_view_cost_price: true, avatar_url: user.avatar_url || null } });
+  // فيديو الترحيب (لشروق فقط). بنرجّعه بس عند إكمال الباسورد + OTP، فبيتعرض مرة واحدة لكل تسجيل دخول.
+  const login_video = await getLoginVideoPayload({ id: user.id, role: 'owner', username: user.username });
+  return res.json({ token, login_video, user: { id: user.id, full_name: user.full_name, username: user.username, role: 'owner', can_view_cost_price: true, avatar_url: user.avatar_url || null } });
 }
+
 const ownerEmailOtpLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false, message: { error: 'محاولات تحقق كثيرة، حاول بعد 15 دقيقة' } });
 router.post('/owner-2fa/verify', ownerEmailOtpLimiter, asyncHandler(async (req, res) => {
   const user = await getOwnerEmailChallenge(req, res); if (!user) return;
@@ -220,7 +224,7 @@ router.post('/owner-2fa/verify', ownerEmailOtpLimiter, asyncHandler(async (req, 
   if (!consumed.length) return res.status(401).json({ error: 'الرمز غير صالح أو استُخدم بالفعل' });
   const current = await get('SELECT id,username,full_name,avatar_url FROM users WHERE id=?', [user.id]);
   await logAction(user.id, 'login', 'user', user.id, { method: 'email_otp' });
-  issueOwnerSession(current, res);
+  await issueOwnerSession(current, res);
 }));
 
 // PUT /api/auth/profile — تغيير الاسم والصورة من إعدادات الحساب الشخصي.

@@ -7,6 +7,20 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { Readable } = require('stream');
 const { getStorageConfig, storageAuthHeaders } = require('../utils/supabaseStorage');
+const { VIDEO_BUCKET, MAX_VIDEO_MB, MAX_VIDEO_SIZE, VIDEO_TYPES, isShroukUser, getVideoRow, streamUrl, verifyStreamToken, sniffVideo } = require('../utils/loginVideo');
+
+// بث فيديو الدخول: متاح قبل الـ authenticate لأن <video> مش بيبعت Authorization header.
+// الأمان: توكن JWT قصير العمر (purpose=login_video) + نتأكد من الداتابيز إن صاحبه شروق/owner/نشط.
+router.get('/login-video/stream', async (req, res) => {
+  const userId = verifyStreamToken(req.query.t);
+  if (!userId) return res.status(401).json({ error: 'انتهت صلاحية رابط الفيديو' });
+  const user = await get('SELECT id,username,role,is_active FROM users WHERE id=?', [userId]);
+  if (!user || !user.is_active || !isShroukUser(user)) return res.status(404).json({ error: 'المورد غير موجود' });
+  const row = await getVideoRow(userId);
+  if (!row) return res.status(404).json({ error: 'لا يوجد فيديو' });
+  await pipePrivateSong(req, res, row, row.video_path, row.video_mime, VIDEO_BUCKET);
+});
+
 router.use(authenticate, authorize('owner'));
 // Music is a Shrouk-only feature. Keep the owner endpoints isolated even if
 // another account is later assigned the owner role.
@@ -53,9 +67,9 @@ function acceptMusicUpload(req, res, next) {
   });
 }
 
-function musicObjectUrl(config, objectPath) {
+function musicObjectUrl(config, objectPath, bucket = MUSIC_BUCKET) {
   const encoded = objectPath.split('/').map(encodeURIComponent).join('/');
-  return `${config.url}/storage/v1/object/${MUSIC_BUCKET}/${encoded}`;
+  return `${config.url}/storage/v1/object/${bucket}/${encoded}`;
 }
 
 function safeStorageError(response, details) {
@@ -69,8 +83,8 @@ function safeStorageError(response, details) {
   });
 }
 
-async function ensurePrivateMusicBucket(config) {
-  const endpoint = `${config.url}/storage/v1/bucket/${MUSIC_BUCKET}`;
+async function ensurePrivateMusicBucket(config, bucketId = MUSIC_BUCKET, sizeLimit = MAX_AUDIO_SIZE, mimeTypes = [...new Set([...Object.values(AUDIO_TYPES), ...COVER_TYPES])]) {
+  const endpoint = `${config.url}/storage/v1/bucket/${bucketId}`;
   const current = await fetch(endpoint, { headers: storageAuthHeaders(config) });
   if (current.ok) {
     const bucket = await current.json().catch(() => ({}));
@@ -94,19 +108,20 @@ async function ensurePrivateMusicBucket(config) {
     method: 'POST',
     headers: storageAuthHeaders(config, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
-      id: MUSIC_BUCKET,
-      name: MUSIC_BUCKET,
+      id: bucketId,
+      name: bucketId,
       public: false,
-      file_size_limit: MAX_AUDIO_SIZE,
-      allowed_mime_types: [...new Set([...Object.values(AUDIO_TYPES), ...COVER_TYPES])],
+      file_size_limit: sizeLimit,
+      allowed_mime_types: mimeTypes,
     }),
   });
   if (!create.ok && create.status !== 409) throw safeStorageError(create, await create.text());
 }
 
-async function uploadMusicObject(config, objectPath, file) {
-  await ensurePrivateMusicBucket(config);
-  const response = await fetch(musicObjectUrl(config, objectPath), {
+async function uploadMusicObject(config, objectPath, file, bucket = MUSIC_BUCKET) {
+  if (bucket === MUSIC_BUCKET) await ensurePrivateMusicBucket(config);
+  else await ensurePrivateMusicBucket(config, bucket, MAX_VIDEO_SIZE, Object.values(VIDEO_TYPES));
+  const response = await fetch(musicObjectUrl(config, objectPath, bucket), {
     method: 'POST',
     headers: storageAuthHeaders(config, { 'Content-Type': file.mimetype, 'x-upsert': 'false' }),
     body: file.buffer,
@@ -114,10 +129,10 @@ async function uploadMusicObject(config, objectPath, file) {
   if (!response.ok) throw safeStorageError(response, await response.text());
 }
 
-async function deleteMusicObjects(config, objectPaths) {
+async function deleteMusicObjects(config, objectPaths, bucket = MUSIC_BUCKET) {
   const prefixes = objectPaths.filter(Boolean);
   if (!prefixes.length) return;
-  const response = await fetch(`${config.url}/storage/v1/object/${MUSIC_BUCKET}`, {
+  const response = await fetch(`${config.url}/storage/v1/object/${bucket}`, {
     method: 'DELETE',
     headers: storageAuthHeaders(config, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ prefixes }),
@@ -146,10 +161,10 @@ async function findOwnerSong(id, ownerId) {
   return get('SELECT * FROM owner_songs WHERE id=? AND user_id=?', [Number(id), ownerId]);
 }
 
-async function pipePrivateSong(req, res, song, objectPath, mimeType) {
+async function pipePrivateSong(req, res, song, objectPath, mimeType, bucket = MUSIC_BUCKET) {
   const config = getStorageConfig();
   if (!config) return res.status(503).json({ error: 'إعداد Supabase Storage غير مكتمل على الخادم' });
-  const url = musicObjectUrl(config, objectPath).replace('/object/', '/object/authenticated/');
+  const url = musicObjectUrl(config, objectPath, bucket).replace('/object/', '/object/authenticated/');
   const headers = storageAuthHeaders(config);
   const range = req.headers.range;
   if (range && /^bytes=\d*-\d*$/.test(range)) headers.Range = range;
@@ -254,6 +269,68 @@ router.delete('/songs/:id', async (req, res) => {
   if (!config) return res.status(503).json({ error: 'إعداد Supabase Storage غير مكتمل على الخادم' });
   await deleteMusicObjects(config, [song.audio_path, song.cover_path]);
   await run('DELETE FROM owner_songs WHERE id=? AND user_id=?', [song.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+// ───────── فيديو الترحيب عند الدخول (شروق فقط) ─────────
+router.use('/login-video', (req, res, next) => {
+  if (!isShroukUser(req.user)) return res.status(404).json({ error: 'المورد غير موجود' });
+  next();
+});
+const videoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_VIDEO_SIZE, files: 1 },
+  fileFilter(_req, file, callback) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const okMime = file.mimetype.startsWith('video/') || file.mimetype === 'application/octet-stream';
+    if (file.fieldname !== 'video' || !VIDEO_TYPES[ext] || !okMime) {
+      return callback(Object.assign(new Error('صيغة الفيديو غير مدعومة (MP4 أو MOV أو WEBM)'), { status: 400 }));
+    }
+    callback(null, true);
+  },
+});
+function acceptVideoUpload(req, res, next) {
+  videoUpload.single('video')(req, res, error => {
+    if (!error) return next();
+    const tooLarge = error.code === 'LIMIT_FILE_SIZE';
+    res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? `حجم الفيديو يتجاوز ${MAX_VIDEO_MB} ميجابايت` : error.message || 'تعذر قراءة الفيديو' });
+  });
+}
+function publicLoginVideo(row, userId) {
+  return row ? { title: row.title || '', mime: row.video_mime, size: row.video_size, created_at: row.created_at, url: streamUrl(userId) } : null;
+}
+router.get('/login-video', async (req, res) => {
+  res.json({ video: publicLoginVideo(await getVideoRow(req.user.id), req.user.id), max_mb: MAX_VIDEO_MB });
+});
+router.post('/login-video', acceptVideoUpload, async (req, res) => {
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'اختاري ملف الفيديو أولاً' });
+  if (!sniffVideo(file.buffer)) return res.status(400).json({ error: 'الملف ليس فيديو صالحًا' });
+  const config = getStorageConfig();
+  if (!config) return res.status(503).json({ error: 'إعداد Supabase Storage غير مكتمل على الخادم' });
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  const mime = VIDEO_TYPES[ext];
+  const title = String(req.body.title || path.basename(file.originalname, ext)).trim().slice(0, 120);
+  const objectPath = `${req.user.id}/${randomUUID()}${ext}`;
+  const previous = await getVideoRow(req.user.id);
+  await uploadMusicObject(config, objectPath, { ...file, mimetype: mime }, VIDEO_BUCKET);
+  try {
+    if (previous) await run('UPDATE owner_login_video SET video_path=?,video_mime=?,video_size=?,title=?,created_at=datetime(\'now\') WHERE user_id=?', [objectPath, mime, file.size, title, req.user.id]);
+    else await run('INSERT INTO owner_login_video(user_id,video_path,video_mime,video_size,title) VALUES(?,?,?,?,?)', [req.user.id, objectPath, mime, file.size, title]);
+  } catch (error) {
+    await deleteMusicObjects(config, [objectPath], VIDEO_BUCKET).catch(() => {});
+    throw error;
+  }
+  if (previous) await deleteMusicObjects(config, [previous.video_path], VIDEO_BUCKET).catch(e => console.warn('old login video cleanup failed:', e.message));
+  res.status(201).json({ video: publicLoginVideo(await getVideoRow(req.user.id), req.user.id) });
+});
+router.delete('/login-video', async (req, res) => {
+  const row = await getVideoRow(req.user.id);
+  if (!row) return res.json({ ok: true });
+  const config = getStorageConfig();
+  if (!config) return res.status(503).json({ error: 'إعداد Supabase Storage غير مكتمل على الخادم' });
+  await deleteMusicObjects(config, [row.video_path], VIDEO_BUCKET);
+  await run('DELETE FROM owner_login_video WHERE user_id=?', [req.user.id]);
   res.json({ ok: true });
 });
 
