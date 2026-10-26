@@ -110,7 +110,7 @@
     if (!info || !info.url || overlay) return false;
     injectCss();
     const el = document.createElement('div'); el.id = 'sxLoginVideo'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'فيديو الترحيب');
-    el.innerHTML = '<div class="lv-load"><div class="lv-sun"></div></div><button type="button" class="lv-skip">تخطي ›</button><button type="button" class="lv-sound">🔊 اضغطي لتشغيل الصوت</button><div class="lv-bar"><i></i></div>';
+    el.innerHTML = '<div class="lv-load"><div class="lv-sun"></div></div>' + (opts.preview ? '<button type="button" class="lv-skip">إغلاق ✕</button>' : '') + '<button type="button" class="lv-sound">🔊 اضغطي لتشغيل الصوت</button><div class="lv-bar"><i></i></div>';
     // نستخدم العنصر المجهّز لو موجود (نفس العنصر اللي اتفعّل بلمسة المستخدم)
     const v = (!opts.preview && primed) ? primed : document.createElement('video');
     if (v === primed) primed = null;
@@ -125,14 +125,18 @@
     const skip = el.querySelector('.lv-skip'), sound = el.querySelector('.lv-sound'), load = el.querySelector('.lv-load'), bar = el.querySelector('.lv-bar i');
     let started = false, finished = false;
     const finish = (instant) => { if (finished) return; finished = true; clearTimeout(watchdog); closeOverlay(instant); };
-    el.__key = e => { if (e.key === 'Escape') finish(); };
+    // فيديو الدخول إلزامي: مفيش زر تخطي ولا Escape. الإغلاق متاح فقط في "المعاينة" من صفحتي.
+    el.__key = e => { if (opts.preview && e.key === 'Escape') finish(); else if (!opts.preview) e.preventDefault(); };
     document.addEventListener('keydown', el.__key);
-    skip.addEventListener('click', () => finish());
-    setTimeout(() => skip.classList.add('show'), opts.preview ? 300 : 1200);
+    if (skip) { skip.addEventListener('click', () => finish()); setTimeout(() => skip.classList.add('show'), 300); }
 
     v.addEventListener('playing', () => { started = true; load.classList.add('hide'); });
     v.addEventListener('timeupdate', () => { if (v.duration > 0) bar.style.width = (v.currentTime / v.duration * 100) + '%'; });
     v.addEventListener('ended', () => finish());
+    if (!opts.preview) { // مينفعش يوقّفه: لو اتوقف (تبديل تبويب/مكالمة) يكمّل تلقائياً
+      v.addEventListener('pause', () => { if (!finished && !v.ended) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } });
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && !finished && v.paused) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } });
+    }
     v.addEventListener('error', () => { if (!opts.preview) console.warn('login video failed to play'); finish(true); });
     sound.addEventListener('click', () => { v.muted = false; v.volume = 1; sound.classList.remove('show'); const p = v.play(); if (p && p.catch) p.catch(() => {}); });
     // لمسة على الشاشة = تشغيل الصوت لو كان صامت
@@ -169,7 +173,7 @@
     let u = null; try { u = state.user; } catch (_) {}
     if (!u || u.role !== 'owner' || String(u.username || '').toLowerCase() !== 'shrouk') { host.remove(); return; }
     injectCss();
-    host.innerHTML = '<section class="owner-feature-card owner-video-card"><div class="lvc-head"><div><div class="lvc-title"><span class="owner-card-icon" aria-hidden="true">🎬</span> فيديو الترحيب</div><p class="lvc-caption">فيديو يشتغل تلقائيًا أول ما تسجّلي الدخول (بعد رمز التحقق)، مرة واحدة فقط في كل تسجيل دخول. خاص بحسابك ولا يظهر لأي حساب آخر.</p></div><span class="lvc-badge" id="lvcBadge">لا يوجد فيديو</span></div><div id="lvcBody"><div class="owner-small">جارٍ التحميل…</div></div><div class="lvc-progress" id="lvcProgress"><div class="lvc-track"><i id="lvcFill"></i></div><span class="lvc-pct" id="lvcPct">0%</span><button type="button" class="lvc-btn" id="lvcCancel">إلغاء</button></div><div id="lvcWarn"></div></section>';
+    host.innerHTML = '<section class="owner-feature-card owner-video-card"><div class="lvc-head"><div><div class="lvc-title"><span class="owner-card-icon" aria-hidden="true">🎬</span> فيديو الترحيب</div><p class="lvc-caption">فيديو يشتغل تلقائيًا أول ما تسجّلي الدخول (بعد رمز التحقق) ولازم يكتمل قبل ما يفتح النظام، مرة واحدة فقط في كل تسجيل دخول. خاص بحسابك ولا يظهر لأي حساب آخر.</p></div><span class="lvc-badge" id="lvcBadge">لا يوجد فيديو</span></div><div id="lvcBody"><div class="owner-small">جارٍ التحميل…</div></div><div class="lvc-progress" id="lvcProgress"><div class="lvc-track"><i id="lvcFill"></i></div><span class="lvc-pct" id="lvcPct">0%</span><button type="button" class="lvc-btn" id="lvcCancel">إلغاء</button></div><div id="lvcWarn"></div></section>';
     const $ = s => host.querySelector(s);
     let current = null, maxMb = 50, xhr = null;
 
@@ -220,7 +224,7 @@
       if (!info.ok) {
         warn('المتصفح لم يستطع قراءة هذا الفيديو (غالبًا ترميز HEVC/H.265 من الآيفون). يفضّل تحويله إلى MP4 بترميز H.264 حتى يعمل على كل الأجهزة. سنرفعه على أي حال.');
       } else if (info.duration > 120) {
-        warn('مدة الفيديو ' + Math.round(info.duration) + ' ثانية — فيديو ترحيب أقصر (10–30 ثانية) يكون أريح عند كل دخول. يمكنك تخطيه دائمًا.');
+        warn('مدة الفيديو ' + Math.round(info.duration) + ' ثانية — فيديو الترحيب إلزامي ولا يمكن تخطيه عند الدخول، فالأفضل أن يكون قصيرًا (10–30 ثانية).');
       }
       upload(file);
     }
