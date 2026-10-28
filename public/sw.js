@@ -9,7 +9,7 @@
 // الأيقونات، manifest.json — يعني الواجهة تقدر تفتح أوفلاين، لكن أي
 // بيانات حقيقية جوه الواجهة لازم تيجي من السيرفر دايماً.
 
-const CACHE_VERSION = 'v11'; // ← زوّد الرقم ده مع كل نشرة فيها تغيير في الفرونت اند
+const CACHE_VERSION = 'v13'; // ← زوّد الرقم ده مع كل نشرة فيها تغيير في الفرونت اند
 const SHELL_CACHE = `erp-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `erp-runtime-${CACHE_VERSION}`;
 
@@ -21,7 +21,7 @@ const SHELL_ASSETS = [
   '/receivables.js?v=13',
   '/shrouk-mobile.css?v=1',
   '/shrouk-mobile.js?v=1',
-  '/login-video.js?v=1',
+  '/login-video.js?v=3',
   '/icons/icon-72.png',
   '/icons/icon-96.png',
   '/icons/icon-128.png',

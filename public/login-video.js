@@ -26,9 +26,9 @@
   #sxLoginVideo.in{opacity:1}
   #sxLoginVideo.out{opacity:0;transition:opacity .6s ease}
   #sxLoginVideo video{width:100%;height:100%;object-fit:contain;background:#000;outline:0}
-  #sxLoginVideo .lv-skip{position:absolute;top:calc(env(safe-area-inset-top,0px) + 14px);inset-inline-start:14px;min-height:44px;padding:0 18px;border:1px solid rgba(255,255,255,.28);border-radius:22px;background:rgba(20,14,8,.55);color:#fff;font:700 14px Tajawal,system-ui,sans-serif;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer;opacity:0;transform:translateY(-6px);transition:opacity .35s ease,transform .35s ease;pointer-events:none}
-  #sxLoginVideo .lv-skip.show{opacity:1;transform:none;pointer-events:auto}
-  #sxLoginVideo .lv-skip:active{transform:scale(.95)}
+  #sxLoginVideo .lv-pause{position:absolute;inset-inline-end:18px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);width:52px;height:52px;border:1px solid rgba(255,255,255,.28);border-radius:50%;background:rgba(20,14,8,.55);color:#fff;font-size:20px;line-height:1;display:grid;place-items:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer;transition:transform .14s ease,background .2s ease}
+  #sxLoginVideo .lv-pause:active{transform:scale(.92)}
+  #sxLoginVideo .lv-pause:hover{background:rgba(40,28,14,.75)}
   #sxLoginVideo .lv-sound{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 34px);transform:translateX(-50%);min-height:48px;padding:0 22px;border:0;border-radius:24px;background:linear-gradient(135deg,#ffd55f,#f4a02d);color:#2b1700;font:800 15px Tajawal,system-ui,sans-serif;box-shadow:0 10px 28px -8px rgba(255,190,70,.7);cursor:pointer;display:none;animation:lvPulse 1.6s ease-in-out infinite}
   #sxLoginVideo .lv-sound.show{display:block}
   @keyframes lvPulse{50%{box-shadow:0 10px 40px -4px rgba(255,190,70,.95)}}
@@ -110,7 +110,7 @@
     if (!info || !info.url || overlay) return false;
     injectCss();
     const el = document.createElement('div'); el.id = 'sxLoginVideo'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'فيديو الترحيب');
-    el.innerHTML = '<div class="lv-load"><div class="lv-sun"></div></div>' + (opts.preview ? '<button type="button" class="lv-skip">إغلاق ✕</button>' : '') + '<button type="button" class="lv-sound">🔊 اضغطي لتشغيل الصوت</button><div class="lv-bar"><i></i></div>';
+    el.innerHTML = '<div class="lv-load"><div class="lv-sun"></div></div>' + '<button type="button" class="lv-pause" aria-label="إيقاف مؤقت">⏸</button><button type="button" class="lv-sound">🔊 اضغطي لتشغيل الصوت</button><div class="lv-bar"><i></i></div>';
     // نستخدم العنصر المجهّز لو موجود (نفس العنصر اللي اتفعّل بلمسة المستخدم)
     const v = (!opts.preview && primed) ? primed : document.createElement('video');
     if (v === primed) primed = null;
@@ -122,21 +122,26 @@
     document.documentElement.classList.add('lv-lock');
     requestAnimationFrame(() => el.classList.add('in'));
 
-    const skip = el.querySelector('.lv-skip'), sound = el.querySelector('.lv-sound'), load = el.querySelector('.lv-load'), bar = el.querySelector('.lv-bar i');
+    const sound = el.querySelector('.lv-sound'), pauseBtn = el.querySelector('.lv-pause'), load = el.querySelector('.lv-load'), bar = el.querySelector('.lv-bar i');
     let started = false, finished = false;
     const finish = (instant) => { if (finished) return; finished = true; clearTimeout(watchdog); closeOverlay(instant); };
-    // فيديو الدخول إلزامي: مفيش زر تخطي ولا Escape. الإغلاق متاح فقط في "المعاينة" من صفحتي.
-    el.__key = e => { if (opts.preview && e.key === 'Escape') finish(); else if (!opts.preview) e.preventDefault(); };
+    // الفيديو إلزامي: مفيش زر تخطي/إغلاق ولا Escape في أي مكان. بيتقفل بس لما يخلص (أو يفشل).
+    el.__key = e => { if (e.key === 'Escape' || e.key === ' ') e.preventDefault(); };
     document.addEventListener('keydown', el.__key);
-    if (skip) { skip.addEventListener('click', () => finish()); setTimeout(() => skip.classList.add('show'), 300); }
 
     v.addEventListener('playing', () => { started = true; load.classList.add('hide'); });
     v.addEventListener('timeupdate', () => { if (v.duration > 0) bar.style.width = (v.currentTime / v.duration * 100) + '%'; });
     v.addEventListener('ended', () => finish());
-    if (!opts.preview) { // مينفعش يوقّفه: لو اتوقف (تبديل تبويب/مكالمة) يكمّل تلقائياً
-      v.addEventListener('pause', () => { if (!finished && !v.ended) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } });
-      document.addEventListener('visibilitychange', () => { if (!document.hidden && !finished && v.paused) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } });
-    }
+    // الوحيد المسموح: إيقاف مؤقت / استئناف (زرار واحد). مفيش تخطي ولا تقديم.
+    let userPaused = false;
+    const syncPause = () => { pauseBtn.textContent = v.paused ? '▶' : '⏸'; pauseBtn.setAttribute('aria-label', v.paused ? 'استئناف' : 'إيقاف مؤقت'); };
+    pauseBtn.addEventListener('click', () => {
+      if (v.paused) { userPaused = false; if (v.muted && sound.classList.contains('show')) { /* لسه صامت */ } const p = v.play(); if (p && p.catch) p.catch(() => {}); }
+      else { userPaused = true; v.pause(); }
+    });
+    v.addEventListener('play', syncPause); v.addEventListener('pause', syncPause);
+    // لو المتصفح وقّفه (تبديل تبويب) نكمّل تلقائياً، إلا لو المستخدمة هي اللي وقّفته
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !finished && v.paused && !userPaused) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } });
     v.addEventListener('error', () => { if (!opts.preview) console.warn('login video failed to play'); finish(true); });
     sound.addEventListener('click', () => { v.muted = false; v.volume = 1; sound.classList.remove('show'); const p = v.play(); if (p && p.catch) p.catch(() => {}); });
     // لمسة على الشاشة = تشغيل الصوت لو كان صامت
@@ -191,8 +196,7 @@
       if (!current) { $('#lvcBody').innerHTML = picker; }
       else {
         const dt = current.created_at ? new Date(String(current.created_at).replace(' ', 'T') + (/[zZ+]/.test(current.created_at) ? '' : 'Z')) : null;
-        $('#lvcBody').innerHTML = '<div class="lvc-current"><div class="lvc-preview"><video id="lvcPrev" playsinline muted controls preload="metadata" controlsList="nodownload" src="' + esc(current.url) + '#t=0.5"></video></div><div class="lvc-meta"><div class="lvc-name">' + esc(current.title || 'فيديو الترحيب') + '</div><div class="lvc-sub">' + mb(current.size) + ' ميجابايت' + (dt && !isNaN(dt) ? ' · رُفع ' + dt.toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'long' }) : '') + '</div><div class="lvc-actions"><button type="button" class="lvc-btn primary" id="lvcPlay">▶ معاينة</button><button type="button" class="lvc-btn danger" id="lvcDel">حذف</button></div></div></div><div style="margin-top:14px">' + picker + '</div>';
-        $('#lvcPlay').addEventListener('click', () => showPlayer(current, { preview: true }));
+        $('#lvcBody').innerHTML = '<div class="lvc-current"><div class="lvc-preview"><video id="lvcPrev" playsinline muted controls preload="metadata" controlsList="nodownload" src="' + esc(current.url) + '#t=0.5"></video></div><div class="lvc-meta"><div class="lvc-name">' + esc(current.title || 'فيديو الترحيب') + '</div><div class="lvc-sub">' + mb(current.size) + ' ميجابايت' + (dt && !isNaN(dt) ? ' · رُفع ' + dt.toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'long' }) : '') + '</div><div class="lvc-actions"><button type="button" class="lvc-btn danger" id="lvcDel">حذف</button></div></div></div><div style="margin-top:14px">' + picker + '</div>';
         $('#lvcDel').addEventListener('click', remove);
       }
       const input = $('#lvcFile'), drop = $('#lvcDrop');
@@ -259,5 +263,5 @@
     refresh();
   }
 
-  window.ShroukLoginVideo = { prime, play, mountCard, preview: info => showPlayer(info, { preview: true }) };
+  window.ShroukLoginVideo = { prime, play, mountCard };
 })();
