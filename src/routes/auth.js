@@ -6,6 +6,7 @@ const { get, run, all } = require('../db/database');
 const nodemailer = require('nodemailer');
 const { generateToken, authenticate, JWT_SECRET } = require('../middleware/auth');
 const { getLoginVideoPayload } = require('../utils/loginVideo');
+const { createSession, revokeSession, IDLE_MINUTES } = require('../utils/sessions');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
@@ -120,11 +121,13 @@ router.post('/login', asyncHandler(async (req, res) => {
     return res.json({ requires_2fa: true, challenge_token, destination: maskOwnerEmail(to), user: { username: user.username } });
   }
 
-  const token = generateToken(user);
+  const sid = await createSession(user, req);
+  const token = generateToken(user, sid);
   await logAction(user.id, 'login', 'user', user.id, null);
 
   res.json({
     token,
+    idle_minutes: IDLE_MINUTES,
     user: {
       id: user.id,
       full_name: user.full_name,
@@ -194,11 +197,12 @@ async function getOwnerEmailChallenge(req, res) {
     return user;
   } catch (_) { res.status(401).json({ error: 'انتهت جلسة التحقق، أعد تسجيل الدخول' }); return null; }
 }
-async function issueOwnerSession(user, res) {
-  const token = generateToken({ ...user, role: 'owner', can_view_cost_price: 1 });
+async function issueOwnerSession(user, req, res) {
+  const sid = await createSession(user, req);
+  const token = generateToken({ ...user, role: 'owner', can_view_cost_price: 1 }, sid);
   // فيديو الترحيب (لشروق فقط). بنرجّعه بس عند إكمال الباسورد + OTP، فبيتعرض مرة واحدة لكل تسجيل دخول.
   const login_video = await getLoginVideoPayload({ id: user.id, role: 'owner', username: user.username });
-  return res.json({ token, login_video, user: { id: user.id, full_name: user.full_name, username: user.username, role: 'owner', can_view_cost_price: true, avatar_url: user.avatar_url || null } });
+  return res.json({ token, idle_minutes: IDLE_MINUTES, login_video, user: { id: user.id, full_name: user.full_name, username: user.username, role: 'owner', can_view_cost_price: true, avatar_url: user.avatar_url || null } });
 }
 
 const ownerEmailOtpLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false, message: { error: 'محاولات تحقق كثيرة، حاول بعد 15 دقيقة' } });
@@ -224,7 +228,7 @@ router.post('/owner-2fa/verify', ownerEmailOtpLimiter, asyncHandler(async (req, 
   if (!consumed.length) return res.status(401).json({ error: 'الرمز غير صالح أو استُخدم بالفعل' });
   const current = await get('SELECT id,username,full_name,avatar_url FROM users WHERE id=?', [user.id]);
   await logAction(user.id, 'login', 'user', user.id, { method: 'email_otp' });
-  await issueOwnerSession(current, res);
+  await issueOwnerSession(current, req, res);
 }));
 
 // PUT /api/auth/profile — تغيير الاسم والصورة من إعدادات الحساب الشخصي.
@@ -256,7 +260,7 @@ router.put('/profile', authenticate, (req, res, next) => {
 
   if (uploaded || removeAvatar) await deleteAvatarFromStorage(uploaded?.config || getStorageConfig(), current.avatar_url);
   const user = { ...current, full_name: fullName, avatar_url: avatarUrl };
-  const token = generateToken(user);
+  const token = generateToken(user, req.user.sid); // نفس الجلسة (تحديث الاسم/الصورة مش تسجيل دخول جديد)
   await logAction(req.user.id, 'update_profile', 'user', req.user.id, { full_name: fullName, avatar_changed: Boolean(req.file || removeAvatar) });
   res.json({ token, user: { id: user.id, full_name: user.full_name, username: user.username, role: user.role, can_view_cost_price: !!user.can_view_cost_price, avatar_url: user.avatar_url } });
 }));
@@ -265,7 +269,18 @@ router.put('/profile', authenticate, (req, res, next) => {
 router.get('/me', authenticate, asyncHandler(async (req, res) => {
   const user = await get('SELECT id, full_name, username, role, can_view_cost_price, avatar_url, is_active FROM users WHERE id = ?', [req.user.id]);
   if (!user || !user.is_active) return res.status(401).json({ error: 'الحساب غير متاح، يرجى تسجيل الدخول مرة أخرى' });
-  res.json({ user: { id: user.id, full_name: user.full_name, username: user.username, role: user.role, can_view_cost_price: !!user.can_view_cost_price, avatar_url: user.avatar_url || null } });
+  res.json({ idle_minutes: IDLE_MINUTES, user: { id: user.id, full_name: user.full_name, username: user.username, role: user.role, can_view_cost_price: !!user.can_view_cost_price, avatar_url: user.avatar_url || null } });
+}));
+
+// POST /api/auth/heartbeat — الواجهة بتبعته (كل بضع دقايق) طالما المستخدم بيتفاعل فعلًا مع الشاشة،
+// عشان القراءة/الكتابة في فورم من غير طلبات API ما تتحسبش خمول.
+router.post('/heartbeat', authenticate, (req, res) => res.json({ ok: true, idle_minutes: IDLE_MINUTES }));
+
+// POST /api/auth/logout — إنهاء الجلسة على السيرفر (مش مجرد مسح التوكن من المتصفح)
+router.post('/logout', authenticate, asyncHandler(async (req, res) => {
+  await revokeSession(req.sid, 'logout');
+  await logAction(req.user.id, 'logout', 'user', req.user.id, null);
+  res.json({ ok: true });
 }));
 
 module.exports = router;

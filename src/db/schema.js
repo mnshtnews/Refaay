@@ -193,7 +193,26 @@ async function seedInitialData() {
   }
 }
 
-module.exports = { createSchema, seedInitialData };
+// ───────── جلسات المستخدمين (إنهاء بعد خمول ساعة + إغلاق فوري من SQL) ─────────
+async function migrateSessionsSchema() {
+  await run(`CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    revoke_reason TEXT,
+    ip TEXT,
+    user_agent TEXT
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(last_activity_at) WHERE revoked_at IS NULL');
+  // Supabase بيعرض جداول public على REST API؛ نقفل الجدول (التطبيق بيتصل بدور postgres اللي بيتخطى RLS)
+  await run('ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY');
+}
+
+module.exports = { migrateSessionsSchema, createSchema, seedInitialData };
 
 // ═══════════════════════════════════════════════════════
 //  المرحلة الثانية — الموردون والمشتريات

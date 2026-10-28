@@ -21,6 +21,49 @@
 })();
 </script>
 
+<!-- ═══ حارس الجلسة (مبكر، قبل أي كود تاني): الخمول ساعة = تسجيل خروج، وأي 401 جلسة = شاشة الدخول ═══
+     السيرفر هو المرجع (جدول user_sessions)، وده بس بيوفّر وميض الشاشة ويطبّق نتيجة السيرفر فورًا. -->
+<style>html.auth-check #app{visibility:hidden!important}</style>
+<script>
+(function(){
+  var K_TOKEN='arToken',K_USER='arUser',K_LAST='arLastActive',K_IDLE='arIdleMin';
+  function clearAuth(){try{localStorage.removeItem(K_TOKEN);localStorage.removeItem(K_USER);localStorage.removeItem(K_LAST);}catch(e){}}
+  var done=false;
+  window.forceLogout=function(reason){
+    if(done)return;done=true;
+    try{if(window.closeOwnerMusicPlayer)window.closeOwnerMusicPlayer();}catch(e){}
+    try{sessionStorage.setItem('arLogoutReason',reason||'expired');}catch(e){}
+    clearAuth();location.reload();
+  };
+  try{
+    if(localStorage.getItem(K_TOKEN)){
+      var idleMs=(+localStorage.getItem(K_IDLE)||60)*60000,last=+localStorage.getItem(K_LAST)||0,age=Date.now()-last;
+      if(!last||age>idleMs){ // فتح اللينك بعد خمول (أو توكن قديم من قبل نظام الجلسات) → تسجيل دخول من جديد
+        clearAuth();try{sessionStorage.setItem('arLogoutReason','idle');}catch(e){}
+      }else if(age>300000){ // غايب أكتر من 5 دقايق: نخفي التطبيق لحد ما السيرفر يؤكد الجلسة (حد أقصى 8 ثواني)
+        document.documentElement.classList.add('auth-check');
+        setTimeout(function(){document.documentElement.classList.remove('auth-check');},8000);
+      }
+    }
+  }catch(e){}
+  // أي رد 401 من السيرفر بكود SESSION_EXPIRED على أي طلب /api (fetch) = الجلسة اتقفلت → خروج فوري
+  var _fetch=window.fetch;
+  window.fetch=function(input,init){
+    return _fetch.apply(this,arguments).then(function(res){
+      try{
+        if(res.status===401){
+          var u=typeof input==='string'?input:(input&&input.url)||'';
+          if(u.indexOf('/api/')>-1&&!/\/api\/auth\/(login|owner-2fa)/.test(u)&&localStorage.getItem(K_TOKEN)){
+            res.clone().json().then(function(d){if(d&&d.code==='SESSION_EXPIRED')window.forceLogout(d.reason||'expired');}).catch(function(){});
+          }
+        }
+      }catch(e){}
+      return res;
+    });
+  };
+})();
+</script>
+
 <!-- ═══ تجربة موبايل شروق (shrouk-ux): تفعيل مبكر قبل الرسم عشان شاشة الافتتاح تظهر فوراً بدون وميض.
      بيشتغل لحساب role=owner/username=shrouk فقط؛ أي حساب تاني = لا أثر. ═══ -->
 <script>
@@ -6157,6 +6200,7 @@ async function doLogin() {
       window.ShroukLoginVideo&&ShroukLoginVideo.prime(); // تصريح الصوت: لازم يحصل داخل لمسة المستخدم قبل الـ await
       const data=await API.post('/auth/owner-2fa/verify',{code});
       state.token=data.token;state.user=data.user;localStorage.setItem('arToken',data.token);localStorage.setItem('arUser',JSON.stringify(data.user));
+      if(data.idle_minutes)localStorage.setItem('arIdleMin',String(data.idle_minutes));localStorage.setItem('arLastActive',String(Date.now()));
       ownerLoginPending=false;
       try{window.ShroukLoginVideo&&ShroukLoginVideo.play(data);}catch(e){} // فيديو شروق: فوراً بعد الـ OTP، مرة واحدة لكل دخول
       initApp();return;
@@ -6171,7 +6215,8 @@ async function doLogin() {
       document.getElementById('ownerTwoFactorHint').textContent='تم إرسال رمز من 6 أرقام إلى '+(data.destination||'بريد المالك')+'. أدخله خلال 5 دقائق لإكمال تسجيل الدخول.';
       document.getElementById('loginBtn').innerHTML='<span>تحقق وتابع</span>';document.getElementById('ownerTwoFactorCode').focus();return;
     }
-    state.token=data.token;state.user=data.user;localStorage.setItem('arToken',data.token);localStorage.setItem('arUser',JSON.stringify(data.user));initApp();
+    state.token=data.token;state.user=data.user;localStorage.setItem('arToken',data.token);localStorage.setItem('arUser',JSON.stringify(data.user));
+    if(data.idle_minutes)localStorage.setItem('arIdleMin',String(data.idle_minutes));localStorage.setItem('arLastActive',String(Date.now()));initApp();
   } catch(err) { if(ownerLoginPending&&(err.message.includes('انتهت صلاحية الرمز')||err.message.includes('انتهت جلسة التحقق')||err.message.includes('ابدأ تسجيل الدخول من جديد'))){ownerLoginPending=false;state.token=null;document.getElementById('ownerTwoFactorPanel').style.display='none';document.getElementById('loginPassword').closest('.form-group').style.display='';document.getElementById('loginUsername').closest('.form-group').style.display='';document.getElementById('ownerTwoFactorCode').value='';} fail(err.message); }
   finally { btn.disabled=false;if(ownerLoginPending)btn.innerHTML='<span>تحقق وتابع</span>';else btn.innerHTML='<span>دخول إلى النظام</span>'; }
 }
@@ -6197,8 +6242,11 @@ document.getElementById('ownerTwoFactorCode').addEventListener('keydown', e => {
 
 function logout() {
   window.closeOwnerMusicPlayer?.();
+  // إنهاء الجلسة على السيرفر (keepalive عشان الطلب يكمل حتى لو الصفحة بتتعمل reload)
+  try { if (state.token) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.token}` }, keepalive: true }).catch(() => {}); } catch (_) {}
   localStorage.removeItem('arToken');
   localStorage.removeItem('arUser');
+  localStorage.removeItem('arLastActive');
   location.reload();
 }
 
@@ -16701,6 +16749,7 @@ async function saveSettings() {
 </script>
 <script src="/receivables.js?v=13" defer></script>
 
+<script src="/session-guard.js?v=1" defer></script>
 <script src="/login-video.js?v=3" defer></script>
 <script src="/owner-space.js" defer></script>
 <script src="/shrouk-mobile.js?v=1" defer></script>

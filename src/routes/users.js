@@ -5,6 +5,7 @@ const router = express.Router();
 const { run, get, all, insert } = require('../db/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { logAction } = require('../utils/auditLog');
+const { revokeUserSessions } = require('../utils/sessions');
 
 function normalizeAvatarUrl(value) {
   if (value == null || value === '') return null;
@@ -122,6 +123,8 @@ router.put('/:id', authorize('admin'), async (req, res) => {
   }
 
   await logAction(req.user.id, 'update', 'user', id, req.body);
+  // تغيير كلمة المرور أو الدور أو التعطيل = إنهاء جلسات هذا المستخدم فورًا (الجلسة الحالية للمدير نفسه تفضل)
+  if (password || disabling || (role && role !== user.role)) await revokeUserSessions(Number(id), 'admin_update', Number(id) === req.user.id ? req.sid : null);
   const updated = await get(`SELECT id, full_name, username, role, is_active, can_view_cost_price, avatar_url FROM users WHERE id = ?`, [id]);
   const updatedLocationIds = await getUserLocationIds(Number(id));
   res.json({ user: { ...updated, allowed_location_ids: updatedLocationIds } });
@@ -160,6 +163,7 @@ router.delete('/:id', authorize('admin'), async (req, res) => {
   if (target.role === 'admin' && req.user.role !== 'owner') return res.status(403).json({ error: 'تعطيل حسابات الإدارة متاح للمالك فقط' });
 
   await run(`UPDATE users SET is_active = 0 WHERE id = ?`, [id]);
+  await revokeUserSessions(Number(id), 'deactivated');
   await logAction(req.user.id, 'deactivate', 'user', id, null);
   res.json({ message: 'تم تعطيل المستخدم بنجاح' });
 });
