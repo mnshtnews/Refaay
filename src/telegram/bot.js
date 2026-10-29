@@ -9,11 +9,14 @@ const tg = require('./tg');
 const cfg = require('./config');
 const reports = require('./reports');
 const invoiceFlow = require('./invoiceFlow');
+const { parseIntent, stripAddress } = require('./intents');
 const engine = require('./stockAlertEngine');
 const { get, run } = require('../db/database');
 
 const ROLE_RANK = { member: 1, admin: 2 };
 let running = false, offset = 0, botUsername = '';
+const ANON_ADMIN_ID = 1087968824; // GroupAnonymousBot
+const ADMIN_ONLY_DATA = /^(sp:|pq$|td$|inv:|m:alerts$|al:|sr:\w+:x$)/;
 
 function roleFor(chat, from) {
   if (!chat || !from || from.is_bot) return null;
@@ -74,7 +77,18 @@ async function onMessage(msg) {
   if (cmdMatch && cmdMatch[2] && botUsername && cmdMatch[2].toLowerCase() !== botUsername.toLowerCase()) return; // أمر موجّه لبوت تاني
 
   // /myid متاح لأي حد (عشان صاحب النظام يعرف رقمه ويحطه في TELEGRAM_ADMIN_IDS)
-  if (cmd === 'myid') { await tg.sendMessage(chat.id, `🆔 معرّفك: <code>${from.id}</code>`); return; }
+  if (cmd === 'myid' || cmd === 'whoami') {
+    const r = roleFor(chat, from);
+    const anon = from.id === ANON_ADMIN_ID || !!msg.sender_chat;
+    await tg.sendMessage(chat.id, anon
+      ? '👤 أنت بتكتب كـ<b>أدمن مجهول</b> (باسم الجروب)، فتيليجرام مابيبعتش رقمك. ادخل إعدادات صلاحياتك كأدمن في الجروب وأوقف «البقاء مجهول» (Remain Anonymous) عشان البوت يتعرف عليك.'
+      : `🆔 معرّفك: <code>${from.id}</code>\n🔐 دورك عند البوت: <b>${r === 'admin' ? 'أدمن ✅' : r === 'member' ? 'عضو' : 'غير مصرّح'}</b>${r === 'admin' ? '' : '\n<i>لو انت الأدمن: ضيف الرقم ده في TELEGRAM_ADMIN_IDS على السيرفر وأعد التشغيل.</i>'}`);
+    return;
+  }
+  if (from.id === ANON_ADMIN_ID || msg.sender_chat) { // رسالة باسم الجروب/قناة: هوية غير معروفة → مفيش صلاحيات
+    if (isAddressed(msg, text)) await tg.sendMessage(chat.id, '👤 مش قادر أتعرف عليك لأنك بتكتب كـ<b>أدمن مجهول</b>. أوقف «البقاء مجهول» من صلاحياتك في الجروب وجرّب تاني.', { reply_to_message_id: msg.message_id });
+    return;
+  }
 
   const role = roleFor(chat, from);
   if (!role) { if (chat.type === 'private' && cmd) await tg.sendMessage(chat.id, '🔒 البوت للاستخدام داخل مجموعة الشركة، أو في الخاص للأدمن المعتمدين فقط.'); return; }
@@ -92,12 +106,40 @@ async function onMessage(msg) {
   if (cmd) return; // أمر غير معروف: تجاهل
 
   // نص عادي: لو الأدمن في وسط تدفّق (فاتورة / استعلام منتج)
-  if (can(role, 'admin')) {
-    if (await invoiceFlow.onText(chat, from, text)) return;
+  // في الجروب: نص التدفقات (فاتورة/استعلام) بيتقبل فقط لو رد على رسالة البوت أو منشن له — عشان كلام الأدمن العادي مع زمايله ما يتفسّرش غلط
+  if (can(role, 'admin') && isAddressed(msg, text)) {
+    if (await invoiceFlow.onText(chat, from, stripAddress(text, botUsername))) return;
     const p = pendingText.get(key);
     if (p && Date.now() - p.at < 10 * 60 * 1000) { pendingText.delete(key); await showProducts(chat.id, text); return; }
   }
-  if (chat.type === 'private') await sendMain(chat.id, role);
+  // كلام حر موجّه للبوت (في الجروب: لازم منشن @البوت أو رد على رسالته أو يبدأ بـ«بوت»؛ في الخاص: دايمًا)
+  if (isAddressed(msg, text)) { await handleNaturalLanguage(chat, from, role, msg, stripAddress(text, botUsername)); return; }
+}
+
+function isAddressed(msg, text) {
+  if (msg.chat.type === 'private') return true;
+  const low = String(text || '').toLowerCase();
+  if (botUsername && low.includes('@' + botUsername.toLowerCase())) return true;
+  const rt = msg.reply_to_message;
+  if (rt && rt.from && rt.from.is_bot && botUsername && String(rt.from.username || '').toLowerCase() === botUsername.toLowerCase()) return true;
+  return /^\s*(يا\s*)?بوت(?=[\s,،:]|$)/i.test(text || '');
+}
+async function handleNaturalLanguage(chat, from, role, msg, text) {
+  const reply = { reply_to_message_id: msg.message_id };
+  const it = parseIntent(text);
+  const deny = () => tg.sendMessage(chat.id, '🔒 الخدمة دي للأدمن فقط. اللي متاح ليك: تقارير المخزون (نفدت/قاربت) وكشف بواقي العملاء.', reply);
+  const act = (data) => (ADMIN_ONLY_DATA.test(data) && !can(role, 'admin')) ? deny() : onCallback({ id: 'nl:' + msg.message_id, data, from, message: { chat } });
+  switch (it.type) {
+    case 'stock': return act(`sr:${it.kind}:p`);
+    case 'receivables': return act(it.all ? 'rc:all' : 'rc:bal');
+    case 'suppliers': return act(it.all ? 'sp:all' : 'sp:bal');
+    case 'today': return act('td');
+    case 'alerts': return act('m:alerts');
+    case 'invoice': return act('inv:new');
+    case 'product': if (!can(role, 'admin')) return deny(); return showProducts(chat.id, it.query);
+    case 'menu': return sendMain(chat.id, role);
+    default: await tg.sendMessage(chat.id, 'مفهمتش قصدك 🤔 اختار من القائمة 👇 أو قول مثلًا: «المنتجات اللي نفدت» / «بواقي العملاء»' + (can(role, 'admin') ? ' / «سعر نجفة كريستال» / «فاتورة جديدة»' : ''), { ...reply, reply_markup: mainMenu(role) });
+  }
 }
 const receivablesCaption = (r) => `👥 <b>${r.dueCount} عميل عليهم رصيد</b> بإجمالي <b>${reports.num(r.totalDue)}</b> ج.م\n🕒 ${r.now.stamp}`;
 
@@ -182,4 +224,4 @@ async function start() {
 }
 function stop() { running = false; }
 
-module.exports = { start, stop, handle, roleFor, mainMenu, _setUsername: (u) => { botUsername = u; } };
+module.exports = { start, stop, handle, roleFor, mainMenu, isAddressed, _setUsername: (u) => { botUsername = u; } };
