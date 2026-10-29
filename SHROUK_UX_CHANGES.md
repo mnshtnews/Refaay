@@ -14,3 +14,6 @@
 معدّل: middleware/auth.js (authenticate async + sid), routes/auth.js (إنشاء جلسة، /heartbeat، /logout)، routes/users.js (تغيير كلمة مرور/دور/تعطيل = قفل جلساته)، server.js، index.html (حارس مبكر)، sw.js (v14)
 متغيرات: SESSION_IDLE_MINUTES (60) / SESSION_MAX_HOURS (12)
 أول نشر: كل التوكنات القديمة (بدون sid) بتتقفل = كل المستخدمين يسجلوا دخول مرة واحدة.
+
+## بوت تيليجرام (تنبيهات ذكية + قوائم + تقارير PDF + فواتير)
+التفاصيل: docs/TELEGRAM_BOT.md  —  جديد: src/telegram/* , src/assets/fonts/*  —  معدّل: telegramNotifier.js, notificationScheduler.js, listeners.js, schema.js, server.js

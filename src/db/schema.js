@@ -212,7 +212,22 @@ async function migrateSessionsSchema() {
   await run('ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY');
 }
 
-module.exports = { migrateSessionsSchema, createSchema, seedInitialData };
+// ───────── بوت تيليجرام: حالة تنبيهات المخزون (عند التغيّر فقط) + بيانات وصفية ─────────
+async function migrateTelegramBotSchema() {
+  await run(`CREATE TABLE IF NOT EXISTS stock_alert_state (
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('low','out')),
+    last_qty DOUBLE PRECISION,
+    notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (product_id, scope)
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS bot_meta (key TEXT PRIMARY KEY, value TEXT)`);
+  await run('ALTER TABLE stock_alert_state ENABLE ROW LEVEL SECURITY');
+  await run('ALTER TABLE bot_meta ENABLE ROW LEVEL SECURITY');
+}
+
+module.exports = { migrateSessionsSchema, migrateTelegramBotSchema, createSchema, seedInitialData };
 
 // ═══════════════════════════════════════════════════════
 //  المرحلة الثانية — الموردون والمشتريات

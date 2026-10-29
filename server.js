@@ -16,7 +16,7 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./src/utils/logger');
 
 const { initDatabase } = require('./src/db/database');
-const { createSchema, migrateSessionsSchema, seedInitialData, createProcurementSchema, migrateProcurementSchema, migrateInventoryAlertsSchema, migratePurchasingSchema, migrateCollectionSchema, migrateNotificationsSchema, migrateReturnsSchema, migrateAccountingDocsSchema, createSalesSchema, createPhase4Schema, migratePerformanceIndexes, migrateProductListPerformanceIndexes, migrateSupplierProductLinks, migrateInventoryCountSchema, migrateProductAttributesSchema, migratePartyGroupsSchema, migrateUserAvatarSchema, migrateOwnerAccountSchema } = require('./src/db/schema');
+const { createSchema, migrateSessionsSchema, migrateTelegramBotSchema, seedInitialData, createProcurementSchema, migrateProcurementSchema, migrateInventoryAlertsSchema, migratePurchasingSchema, migrateCollectionSchema, migrateNotificationsSchema, migrateReturnsSchema, migrateAccountingDocsSchema, createSalesSchema, createPhase4Schema, migratePerformanceIndexes, migrateProductListPerformanceIndexes, migrateSupplierProductLinks, migrateInventoryCountSchema, migrateProductAttributesSchema, migratePartyGroupsSchema, migrateUserAvatarSchema, migrateOwnerAccountSchema } = require('./src/db/schema');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -218,6 +218,7 @@ async function startServer() {
     await seedInitialData();
     await migrateOwnerAccountSchema();
     await migrateSessionsSchema();
+    await migrateTelegramBotSchema();
     require('./src/utils/sessions').startMaintenance();
 
     // مصالحة تاريخية لأقساط اتأثرت بباج قديم (دفعات عامة ماتوزّعتش على
@@ -229,6 +230,7 @@ async function startServer() {
     require('./src/jobs/notificationScheduler').startNotificationScheduler();
 
     app.listen(PORT, '0.0.0.0', () => {
+      require('./src/telegram/bot').start().catch((e) => console.warn('[Bot] start failed:', e.message)); // بوت تيليجرام التفاعلي + تنبيهات المخزون الذكية
       console.log('═══════════════════════════════════════════');
       console.log(`✓ السيرفر يعمل على المنفذ ${PORT}`);
       console.log(`✓ نظام نجف وإضاءة ERP - المراحل من الأولى إلى الرابعة`);

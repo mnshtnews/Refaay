@@ -55,11 +55,11 @@ let lastSentAt = 0;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function postToTelegram(botToken, chatId, message) {
+async function postToTelegram(botToken, chatId, message, extra = {}) {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
+    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true, ...extra }),
   });
   return res.json();
 }
@@ -80,7 +80,7 @@ function isTelegramConfigured() {
 // ── الإرسال الفعلي الخام — أبداً ما يرمي استثناء، عشان فشل الإشعار محدش
 //    يوقف أو يفشّل أي عملية تجارية حقيقية (فاتورة، دفعة، الخ).
 //    بيرجّع true لو الرسالة وصلت فعلاً، و false غير كده. ──
-async function sendText(message) {
+async function sendText(message, extra = {}) {
   const task = queueTail.then(async () => {
     try {
       if (!(await isNotificationsEnabled())) return false;
@@ -96,14 +96,14 @@ async function sendText(message) {
       const since = Date.now() - lastSentAt;
       if (since < SEND_GAP_MS) await sleep(SEND_GAP_MS - since);
 
-      let data = await postToTelegram(botToken, chatId, message);
+      let data = await postToTelegram(botToken, chatId, message, extra);
       lastSentAt = Date.now();
 
       // 429: تيليجرام بيقولنا نستنى كام ثانية — نستناهم ونجرّب مرة واحدة بس
       if (!data.ok && data.error_code === 429) {
         const waitSec = (data.parameters && data.parameters.retry_after) || 5;
         await sleep((waitSec + 1) * 1000);
-        data = await postToTelegram(botToken, chatId, message);
+        data = await postToTelegram(botToken, chatId, message, extra);
         lastSentAt = Date.now();
       }
 

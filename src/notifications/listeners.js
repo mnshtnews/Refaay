@@ -89,10 +89,7 @@ safeOn('sales_return.completed', async (p) => {
 // هذول بيستخدموا sendTextOnce بدل sendText عشان الحماية من التكرار —
 // نفس القسط المتأخر أو نفس المنتج منخفض المخزون ما يتبعتش أكتر من مرة
 // في نفس اليوم حتى لو الفحص الدوري شغّال كل شوية.
-safeOn('inventory.low_stock', async (p) => {
-  const eventKey = `low_stock:${p.product.product_id}:${new Date().toISOString().split('T')[0]}`;
-  await notifier.sendTextOnce(eventKey, 'inventory.low_stock', messages.lowStockMessage(p));
-});
+// 'inventory.low_stock' اتشال: تنبيهات المخزون بقت من src/telegram/stockAlertEngine.js (عند التغيّر فقط ومجمّعة).
 
 safeOn('purchase_order.delayed', async (p) => {
   const eventKey = `po_delayed:${p.order.id}:${new Date().toISOString().split('T')[0]}`;

@@ -64,13 +64,14 @@ async function runAllChecks() {
   const settings = await get(`SELECT notifications_enabled, notify_low_stock FROM settings WHERE id=1`);
   if (settings && !settings.notifications_enabled) return; // الإشعارات متوقفة كلياً من الإعدادات
 
+  // ملحوظة: تنبيهات المخزون اتنقلت لـ src/telegram/stockAlertEngine.js (بتبعت عند التغيّر فقط، مجمّعة).
+  // الفحص القديم (رسالة لكل منتج كل يوم) اتشال لأنه كان بيولّد آلاف الرسائل.
   const tasks = [
     checkInstallments('customer'),
     checkInstallments('supplier'),
     checkDelayedPurchaseOrders(),
     checkOverdueCreditPurchaseOrders(),
   ];
-  if (!settings || settings.notify_low_stock) tasks.push(checkLowStock());
 
   const results = await Promise.allSettled(tasks);
   results.forEach(r => { if (r.status === 'rejected') console.error('[Scheduler] فشل أحد الفحوصات الدورية:', r.reason?.message || r.reason); });
