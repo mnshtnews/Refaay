@@ -17,3 +17,6 @@
 
 ## بوت تيليجرام (تنبيهات ذكية + قوائم + تقارير PDF + فواتير)
 التفاصيل: docs/TELEGRAM_BOT.md  —  جديد: src/telegram/* , src/assets/fonts/*  —  معدّل: telegramNotifier.js, notificationScheduler.js, listeners.js, schema.js, server.js
+
+
+## بحث المنتجات في البوت: SKU فقط — src/telegram/reports.js, bot.js, invoiceFlow.js, intents.js

@@ -133,14 +133,23 @@ function likeAll(columns, query) {
   });
   return { where: conds.length ? conds.join(' AND ') : '1=0', params };
 }
+// ───────── بحث المنتجات: بالـ SKU فقط ─────────
+// مقصود: البحث في البوت بالكود (SKU) فقط — مش بالاسم ولا الباركود — عشان النتائج تبقى دقيقة ومتشابهة في الكود نفسه.
+// المطابقة: الكود يحتوي على اللي اتكتب (جزئي، من غير حساسية لحالة الحروف)، والأقرب أولًا: مطابق تمامًا ← يبدأ بالنص ← يحتويه.
+const SKU_MIN_LEN = 2;
+const normSku = (s) => String(s || '').trim().replace(/\s+/g, '').replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).toLowerCase();
+const escLike = (s) => s.replace(/[!%_]/g, (c) => '!' + c); // نهرّب % و _ عشان ما يتعاملوش كـ wildcard
 async function searchProducts(query, limit = 8, locationId = null) {
-  const { where, params } = likeAll(['p.name', 'p.sku', 'p.barcode'], query);
+  const q = normSku(query);
+  if (q.length < SKU_MIN_LEN) return [];
   return all(`
     SELECT p.id, p.name, p.sku, p.sale_price, p.min_stock_threshold, p.allow_fractional_qty,
            COALESCE((SELECT SUM(i.quantity) FROM inventory i WHERE i.product_id = p.id), 0) AS total_qty,
            ${locationId ? `COALESCE((SELECT i.quantity FROM inventory i WHERE i.product_id = p.id AND i.location_id = ${Number(locationId)}), 0)` : '0'} AS loc_qty
-    FROM products p WHERE p.is_active = 1 AND ${where}
-    ORDER BY (CASE WHEN LOWER(p.sku) = LOWER(?) THEN 0 ELSE 1 END), p.name LIMIT ${Number(limit)}`, [...params, String(query || '').trim()]);
+    FROM products p
+    WHERE p.is_active = 1 AND LOWER(p.sku) LIKE ? ESCAPE '!'
+    ORDER BY (CASE WHEN LOWER(p.sku) = ? THEN 0 WHEN LOWER(p.sku) LIKE ? ESCAPE '!' THEN 1 ELSE 2 END), LENGTH(p.sku), p.sku
+    LIMIT ${Number(limit)}`, [`%${escLike(q)}%`, q, `${escLike(q)}%`]);
 }
 async function productCard(id) {
   const p = await get('SELECT id, name, sku, barcode, sale_price, min_stock_threshold FROM products WHERE id = ?', [id]);
@@ -163,4 +172,4 @@ async function todaySummary() {
   return `📊 <b>ملخص اليوم</b> — ${stamp}\n──────────────\n🧾 فواتير مؤكدة: <b>${sales.n}</b> بإجمالي <b>${num(sales.t)}</b> ج.م\n💵 تحصيلات: <b>${coll.n}</b> دفعة بإجمالي <b>${num(coll.t)}</b> ج.م\n🏭 مدفوعات للموردين: <b>${num(supp.t)}</b> ج.م\n──────────────\n🚨 نفد: <b>${out}</b> منتج   ⚠️ قارب: <b>${stock.length - out}</b> منتج`;
 }
 
-module.exports = { BRAND, num, qtyFmt, esc, cairoNow, normAr, likeAll, getStockRows, buildStockPdf, buildStockXlsx, buildReceivablesPdf, buildPayablesPdf, searchProducts, productCard, todaySummary };
+module.exports = { SKU_MIN_LEN, normSku, BRAND, num, qtyFmt, esc, cairoNow, normAr, likeAll, getStockRows, buildStockPdf, buildStockXlsx, buildReceivablesPdf, buildPayablesPdf, searchProducts, productCard, todaySummary };

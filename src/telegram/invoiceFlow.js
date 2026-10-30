@@ -6,7 +6,8 @@
 const { get, all } = require('../db/database');
 const tg = require('./tg');
 const cfg = require('./config');
-const { likeAll, esc, num, qtyFmt, searchProducts } = require('./reports');
+const reports = require('./reports');
+const { likeAll, esc, num, qtyFmt, searchProducts } = reports;
 const { createSession, revokeSession } = require('../utils/sessions');
 const { generateToken } = require('../middleware/auth');
 
@@ -45,8 +46,9 @@ async function onText(chat, from, text) {
     return true;
   }
   if (st.step === 'prod') {
+    if (reports.normSku(q).length < reports.SKU_MIN_LEN) { await tg.sendMessage(chat.id, `اكتب ${reports.SKU_MIN_LEN} حروف/أرقام على الأقل من كود المنتج.`, { reply_markup: forceReply('كود المنتج SKU') }); return true; }
     const rows = await searchProducts(q, 8, st.location.id);
-    if (!rows.length) { await tg.sendMessage(chat.id, 'مفيش منتج بالاسم/الكود ده 🤔 جرّب تاني.', { reply_markup: forceReply('اسم المنتج أو كوده') }); return true; }
+    if (!rows.length) { await tg.sendMessage(chat.id, 'مفيش منتج كوده (SKU) يحتوي على النص ده 🤔 (البحث بالكود فقط). جرّب تاني.', { reply_markup: forceReply('كود المنتج SKU') }); return true; }
     await tg.sendMessage(chat.id, `اختار المنتج (المتاح في ${esc(st.location.name)}):`, { reply_markup: kb([...rows.map((r) => [{ text: `${r.name} · ${r.sku || ''} · متاح ${qtyFmt(r.loc_qty)}`.slice(0, 62), callback_data: `inv:p:${r.id}` }]), CANCEL_ROW]) });
     return true;
   }
@@ -78,7 +80,7 @@ async function onCallback(chat, from, data, cbq) {
     if (!c) { await tg.answerCallbackQuery(cbq.id, 'العميل غير متاح', true); return; }
     st.customer = c;
     const locs = await all('SELECT id, name FROM locations WHERE is_active = 1 ORDER BY id');
-    if (locs.length === 1) { st.location = locs[0]; st.step = 'prod'; await tg.sendMessage(chat.id, `${header(st)}\n\nاكتب <b>اسم المنتج</b> أو كوده:`, { reply_markup: forceReply('اسم المنتج أو كوده') }); return; }
+    if (locs.length === 1) { st.location = locs[0]; st.step = 'prod'; await tg.sendMessage(chat.id, `${header(st)}\n\nاكتب <b>كود المنتج (SKU)</b> أو جزء منه:`, { reply_markup: forceReply('كود المنتج SKU') }); return; }
     st.step = 'loc';
     await tg.sendMessage(chat.id, `${header(st)}\n\nالبيع من أنهي مخزن؟`, { reply_markup: kb([...locs.map((l) => [{ text: `🏬 ${l.name}`, callback_data: `inv:l:${l.id}` }]), CANCEL_ROW]) });
     return;
@@ -87,9 +89,9 @@ async function onCallback(chat, from, data, cbq) {
     const l = await get('SELECT id, name FROM locations WHERE id = ? AND is_active = 1', [Number(parts[2])]);
     if (!l) { await tg.answerCallbackQuery(cbq.id, 'المخزن غير متاح', true); return; }
     st.location = l; st.step = 'prod';
-    await tg.sendMessage(chat.id, `${header(st)}\n\nاكتب <b>اسم المنتج</b> أو كوده:`, { reply_markup: forceReply('اسم المنتج أو كوده') }); return;
+    await tg.sendMessage(chat.id, `${header(st)}\n\nاكتب <b>كود المنتج (SKU)</b> أو جزء منه:`, { reply_markup: forceReply('كود المنتج SKU') }); return;
   }
-  if (act === 'more') { st.step = 'prod'; await tg.sendMessage(chat.id, 'اكتب اسم المنتج أو كوده:', { reply_markup: forceReply('اسم المنتج أو كوده') }); return; }
+  if (act === 'more') { st.step = 'prod'; await tg.sendMessage(chat.id, 'اكتب <b>كود المنتج (SKU)</b> أو جزء منه:', { reply_markup: forceReply('كود المنتج SKU') }); return; }
   if (act === 'p') {
     const p = await get(`SELECT id, name, sku, sale_price, allow_fractional_qty, COALESCE((SELECT quantity FROM inventory WHERE product_id = products.id AND location_id = ?),0) AS avail FROM products WHERE id = ? AND is_active = 1`, [st.location.id, Number(parts[2])]);
     if (!p) { await tg.answerCallbackQuery(cbq.id, 'المنتج غير متاح', true); return; }

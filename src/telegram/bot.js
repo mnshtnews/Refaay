@@ -138,7 +138,7 @@ async function handleNaturalLanguage(chat, from, role, msg, text) {
     case 'invoice': return act('inv:new');
     case 'product': if (!can(role, 'admin')) return deny(); return showProducts(chat.id, it.query);
     case 'menu': return sendMain(chat.id, role);
-    default: await tg.sendMessage(chat.id, 'مفهمتش قصدك 🤔 اختار من القائمة 👇 أو قول مثلًا: «المنتجات اللي نفدت» / «بواقي العملاء»' + (can(role, 'admin') ? ' / «سعر نجفة كريستال» / «فاتورة جديدة»' : ''), { ...reply, reply_markup: mainMenu(role) });
+    default: await tg.sendMessage(chat.id, 'مفهمتش قصدك 🤔 اختار من القائمة 👇 أو قول مثلًا: «المنتجات اللي نفدت» / «بواقي العملاء»' + (can(role, 'admin') ? ' / «سعر EA-6311» (بالكود SKU) / «فاتورة جديدة»' : ''), { ...reply, reply_markup: mainMenu(role) });
   }
 }
 const receivablesCaption = (r) => `👥 <b>${r.dueCount} عميل عليهم رصيد</b> بإجمالي <b>${reports.num(r.totalDue)}</b> ج.م\n🕒 ${r.now.stamp}`;
@@ -146,13 +146,22 @@ const receivablesCaption = (r) => `👥 <b>${r.dueCount} عميل عليهم ر�
 async function askProduct(chat, from, inline) {
   if (inline && inline.trim()) return showProducts(chat.id, inline.trim());
   pendingText.set(`${chat.id}:${from.id}`, { type: 'pq', at: Date.now() });
-  await tg.sendMessage(chat.id, '🔎 اكتب <b>اسم المنتج</b> أو كوده (SKU) أو الباركود:', { reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'اسم/كود المنتج' } });
+  await tg.sendMessage(chat.id, '🔎 اكتب <b>كود المنتج (SKU)</b> — أو جزء منه:\n<i>البحث بالكود فقط (مش بالاسم ولا الباركود)</i>', { reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'كود المنتج SKU' } });
 }
+const LOOKUP_LIMIT = 10;
 async function showProducts(chatId, q) {
-  const rows = await reports.searchProducts(q, 5);
-  if (!rows.length) { await tg.sendMessage(chatId, 'مفيش منتج بالاسم/الكود ده 🤔'); return; }
-  const cards = []; for (const r of rows) cards.push(await reports.productCard(r.id));
-  await tg.sendMessage(chatId, cards.join('\n\n──────────────\n\n'));
+  if (reports.normSku(q).length < reports.SKU_MIN_LEN) { await tg.sendMessage(chatId, `اكتب ${reports.SKU_MIN_LEN} حروف/أرقام على الأقل من كود المنتج (SKU).`); return; }
+  const rows = await reports.searchProducts(q, LOOKUP_LIMIT + 1);
+  if (!rows.length) { await tg.sendMessage(chatId, `مفيش منتج كوده (SKU) يحتوي على «${reports.esc(String(q).trim())}».\n<i>البحث بالكود فقط — اتأكد من الكود وجرّب تاني.</i>`); return; }
+  const more = rows.length > LOOKUP_LIMIT; const shown = rows.slice(0, LOOKUP_LIMIT);
+  const cards = []; for (const r of shown) cards.push(await reports.productCard(r.id));
+  const head = `🔎 <b>${shown.length}${more ? '+' : ''} منتج</b> كوده يحتوي على «<code>${reports.esc(String(q).trim())}</code>»`;
+  // نقسّم على رسائل (حد تيليجرام 4096 حرف) من غير ما نقطع وسم HTML في النص
+  const chunks = []; let cur = head;
+  for (const c of cards) { const add = `\n\n──────────────\n\n${c}`; if ((cur + add).length > 3600) { chunks.push(cur); cur = c; } else cur += add; }
+  chunks.push(cur);
+  if (more) chunks[chunks.length - 1] += `\n\n<i>⚠️ فيه نتائج أكتر من ${LOOKUP_LIMIT} — اكتب جزء أطول من الكود عشان تضيّق البحث.</i>`;
+  for (const c of chunks) await tg.sendMessage(chatId, c);
 }
 
 // ───────── الضغطات على الأزرار ─────────
