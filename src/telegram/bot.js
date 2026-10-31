@@ -205,15 +205,23 @@ async function handle(update) {
   } catch (e) { console.error('[Bot] handler error:', e.message); }
 }
 async function loop() {
-  let backoff = 2000;
+  let backoff = 2000, netFails = 0;
   while (running) {
     try {
       const updates = await tg.getUpdates(offset, 25);
+      if (netFails) { console.log(`[Bot] ✓ الاتصال بتيليجرام رجع بعد ${netFails} محاولة فاشلة`); netFails = 0; }
       backoff = 2000;
       for (const u of updates) { offset = u.update_id + 1; handle(u); }
     } catch (e) {
       if (e.code === 409) { console.warn('[Bot] نسخة تانية من السيرفر بتعمل polling لنفس البوت — الانتظار 30 ثانية'); backoff = 30000; }
-      else console.warn('[Bot] polling error:', e.message);
+      else if (e.name === 'TypeError' && /fetch failed/i.test(e.message)) {
+        // فشل شبكة (مش رد من تيليجرام): نطبع السبب الحقيقي (ETIMEDOUT / ENOTFOUND / ECONNRESET…) أول مرة وكل 10 محاولات بدل السبام
+        netFails++;
+        if (netFails === 1 || netFails % 10 === 0) {
+          const c = e.cause || {};
+          console.warn(`[Bot] تعذر الوصول لـ api.telegram.org (محاولة ${netFails}) — السبب: ${c.code || c.name || 'unknown'}${c.message ? ' / ' + c.message : ''}. تأكد إن السيرفر يقدر يوصل لتيليجرام (قد يكون محجوبًا/يحتاج VPN أو بروكسي، أو مشكلة DNS/IPv6: جرّب NODE_OPTIONS=--dns-result-order=ipv4first).`);
+        }
+      } else console.warn('[Bot] polling error:', e.message);
       await new Promise((r) => setTimeout(r, backoff)); backoff = Math.min(backoff * 2, 60000);
     }
   }
